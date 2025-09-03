@@ -1,0 +1,74 @@
+name: Verificador de Sismos Fortes
+
+# Define quando o robô vai rodar
+on:
+  schedule:
+    # Roda a cada 15 minutos
+    - cron: '*/15 * * * *'
+  # Permite que você rode manualmente pela aba "Actions" para testar
+  workflow_dispatch:
+
+jobs:
+  check_feed:
+    runs-on: ubuntu-latest
+    steps:
+      # Passo 1: Clona seu repositório para poder ler e escrever o arquivo de controle
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Passo 2: Roda o script principal
+      - name: Verificar Feed RSS e Enviar Notificação
+        run: |
+          # Define as variáveis importantes
+          RSS_URL="https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_month.atom"
+          FCM_KEY="${{ secrets.FCM_SERVER_KEY }}"
+          
+          # Pega o ID do último sismo que notificamos (se o arquivo existir)
+          LAST_ID_FILE="last_quake_id.txt"
+          if [ -f "$LAST_ID_FILE" ]; then
+            LAST_ID=$(cat "$LAST_ID_FILE")
+          else
+            LAST_ID=""
+          fi
+
+          # Baixa o feed e pega o ID e o Título do sismo MAIS RECENTE
+          FEED_CONTENT=$(curl -s "$RSS_URL")
+          CURRENT_ID=$(echo "$FEED_CONTENT" | grep -oP '<id>\K[^<]+' | head -n 1)
+          CURRENT_TITLE=$(echo "$FEED_CONTENT" | grep -oP '<title type="html">\K<![CDATA[([^]]+)]]>' | sed -n '2p' | sed -e 's/&lt;![CDATA[//' -e 's/]]&gt;//' | sed 's/"/\\"/g')
+          
+          echo "Último ID processado: $LAST_ID"
+          echo "ID atual do feed: $CURRENT_ID"
+
+          # Compara o ID atual com o último que guardamos. Se forem diferentes, é um sismo novo!
+          if [ "$CURRENT_ID" != "$LAST_ID" ]; then
+            echo "Novo sismo detectado! Título: $CURRENT_TITLE"
+            
+            # Monta o corpo da notificação em JSON
+            JSON_BODY=$(cat <<EOF
+          {
+            "to": "/topics/ALERTAS_SISMOS_FORTES",
+            "notification": {
+              "title": "Significant Earthquake: $CURRENT_TITLE",
+              "body": "A significant earthquake has been detected. Tap to open StreamNew Monitor for details.",
+              "sound": "default"
+            }
+          }
+EOF
+            )
+
+            # Envia a notificação para o Firebase usando a chave secreta
+            curl -X POST -H "Authorization: key=$FCM_KEY" -H "Content-Type: application/json" \
+                 -d "$JSON_BODY" https://fcm.googleapis.com/fcm/send
+
+            # Se o envio foi bem-sucedido, atualizamos nosso arquivo de controle com o ID novo
+            echo "$CURRENT_ID" > "$LAST_ID_FILE"
+            
+            # Salva o novo ID de volta no repositório para a próxima verificação
+            git config --global user.name 'GitHub Actions'
+            git config --global user.email 'actions@github.com'
+            git add $LAST_ID_FILE
+            git commit -m "Atualiza o ID do último sismo processado"
+            git push
+          else
+            echo "Nenhum sismo novo detectado."
+          fi
