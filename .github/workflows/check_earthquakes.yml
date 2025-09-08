@@ -4,8 +4,12 @@ name: Verificador de Sismos Fortes
 on:
   schedule:
     # Roda a cada 15 minutos
-    - cron: '*/15 * * * *'
+    - cron: '* * * * *'
   workflow_dispatch:
+
+# ** ADICIONE ESTE BLOCO **
+permissions:
+  contents: write
 
 jobs:
   check_feed:
