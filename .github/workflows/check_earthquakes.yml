@@ -1,6 +1,7 @@
 name: Verificador de Sismos Fortes
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: '*/5 * * * *' # Executa a cada 15 minutos
 
