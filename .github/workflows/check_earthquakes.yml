@@ -65,7 +65,7 @@ jobs:
               echo "Novo sismo detectado: $CURRENT_TITLE"
 
               JSON_BODY=$(jq -n \
-                --arg to "/topics/ALERTAS_SISMOS_FORTES" \
+                --arg to "ALERTAS_SISMOS_FORTES" \
                 --arg title "Significant Earthquake: $CURRENT_TITLE" \
                 --arg body "A significant earthquake has been detected. Tap to open StreamNew Monitor for details." \
                 --arg sound "default" \
