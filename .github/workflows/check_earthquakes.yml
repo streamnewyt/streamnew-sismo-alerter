@@ -22,7 +22,7 @@ jobs:
       - name: Gerar token OAuth 2.0 com chave JSON
         id: auth
         run: |
-          echo "${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}" > service-account.json
+          printf '%s' "${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}" > service-account.json
 
           ACCESS_TOKEN=$(python3 - <<EOF
           import json
