@@ -2,7 +2,7 @@ name: Verificador de Sismos Fortes
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # Executa a cada 15 minutos
+    - cron: '*/5 * * * *' # Executa a cada 15 minutos
 
 permissions:
   contents: write
