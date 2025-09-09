@@ -13,26 +13,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # Instala Google Cloud CLI e JQ
       - name: Instalar Google Cloud CLI e JQ
         run: |
           sudo apt-get update
           sudo apt-get install -y jq curl
+
+          # Baixa e instala o Google Cloud SDK
           curl -sS https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-418.0.0-linux-x86_64.tar.gz | tar xz
           ./google-cloud-sdk/install.sh --quiet
 
+          # Adiciona o SDK ao PATH
+          source ./google-cloud-sdk/path.bash.inc
+
           # Salva o JSON da conta de serviço corretamente
-          printf '%s' "${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}" > service-account.json
+          echo '${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}' > service-account.json
 
           # Autentica com a conta de serviço
           ./google-cloud-sdk/bin/gcloud auth activate-service-account --key-file=service-account.json
           ./google-cloud-sdk/bin/gcloud config set project streamnewapp
 
-      # Verifica sismos e envia notificação
-      - name: Verificar API e Enviar Notificação de Teste
+      - name: Verificar API e Enviar Notificação de Sismo
         run: |
           API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=2.5&starttime=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
-
           ACCESS_TOKEN=$(./google-cloud-sdk/bin/gcloud auth print-access-token)
 
           LAST_ID_FILE="last_quake_id.txt"
@@ -45,7 +47,7 @@ jobs:
           FEED_CONTENT=$(curl -s "$API_URL")
 
           if [ "$(echo "$FEED_CONTENT" | jq -e '.features | length')" -eq 0 ]; then
-              echo "A API não retornou sismos para o período. Nenhum sismo novo detectado."
+              echo "Nenhum sismo detectado no período."
               exit 0
           fi
 
@@ -60,7 +62,7 @@ jobs:
             echo "ID do sismo atual: $CURRENT_ID"
 
             if [ "$CURRENT_ID" != "$LAST_ID" ]; then
-              echo "Novo sismo detectado! Título: $CURRENT_TITLE"
+              echo "Novo sismo detectado: $CURRENT_TITLE"
 
               JSON_BODY=$(jq -n \
                 --arg to "/topics/ALERTAS_SISMOS_FORTES" \
