@@ -13,62 +13,94 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Instalar dependências
+      # Passo 1: Instala as ferramentas necessárias (gcloud e jq)
+      - name: Instalar Google Cloud CLI e JQ
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq curl python3 python3-pip
-          pip3 install google-auth
-
-      - name: Gerar token OAuth 2.0 com chave JSON
-        id: auth
-        run: |
-          printf '%s' "${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}" > service-account.json
-
-          ACCESS_TOKEN=$(python3 - <<EOF
-          import json
-          import google.auth
-          from google.auth.transport.requests import Request
-          from google.oauth2 import service_account
-
-          creds = service_account.Credentials.from_service_account_file(
-              'service-account.json',
-              scopes=['https://www.googleapis.com/auth/firebase.messaging']
-          )
-          creds.refresh(Request())
-          print(creds.token)
-          EOF
-          )
-
-          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
-
+          sudo apt-get install -y jq
+          curl -sS https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-418.0.0-linux-x86_64.tar.gz | tar xz
+          ./google-cloud-sdk/install.sh --quiet
+          ./google-cloud-sdk/bin/gcloud config set project streamnewapp
+          ./google-cloud-sdk/bin/gcloud auth activate-service-account --key-file=<(echo "${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}" | jq -r '.')
+          
+      # Passo 2: Roda o script principal (com autenticação JSON)
       - name: Verificar API e Enviar Notificação de Teste
         run: |
-          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=1.0&limit=1&orderby=time"
+          # Define as variáveis importantes para TESTE
+          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=2.5&starttime=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
+          
+          # Gera o token de acesso com base na chave JSON
+          ACCESS_TOKEN=$(./google-cloud-sdk/bin/gcloud auth print-access-token)
+          
+          # Pega o ID do último sismo que notificamos
+          LAST_ID_FILE="last_quake_id.txt"
+          if [ -f "$LAST_ID_FILE" ]; then
+            LAST_ID=$(cat "$LAST_ID_FILE")
+          else
+            LAST_ID="initial"
+          fi
 
           FEED_CONTENT=$(curl -s "$API_URL")
-          CURRENT_TITLE=$(echo "$FEED_CONTENT" | jq -r '.features[0].properties.title')
-          CURRENT_MAGNITUDE=$(echo "$FEED_CONTENT" | jq -r '.features[0].properties.mag')
 
-          echo "Sismo de teste encontrado: $CURRENT_TITLE (M$CURRENT_MAGNITUDE)"
+          if [ "$(echo "$FEED_CONTENT" | jq -e '.features | length')" -eq 0 ]; then
+              echo "A API não retornou sismos para o período. Nenhum sismo novo detectado."
+              exit 0
+          fi
+          
+          QUAKES=$(echo "$FEED_CONTENT" | jq -c '.features[]')
+          
+          FIRST_QUAKE_ID=$(echo "$QUAKES" | head -n 1 | jq -r '.id')
 
-          JSON_BODY=$(jq -n \
-            --arg title "TESTE: Sismo de Magnitude $CURRENT_MAGNITUDE" \
-            --arg body "O sismo mais recente detectado foi: $CURRENT_TITLE" \
-            '{
-              "message": {
-                "topic": "ALERTAS_SISMOS_FORTES",
-                "notification": {
-                  "title": $title,
-                  "body": $body
-                }
-              }
-            }'
-          )
+          echo "$QUAKES" | while read -r QUAKE; do
+            CURRENT_ID=$(echo "$QUAKE" | jq -r '.id')
+            CURRENT_TITLE=$(echo "$QUAKE" | jq -r '.properties.title')
 
-          curl -X POST \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$JSON_BODY" \
-            https://fcm.googleapis.com/v1/projects/streamnewapp/messages:send
+            echo "Último ID processado: $LAST_ID"
+            echo "ID do sismo atual: $CURRENT_ID"
 
-          echo "Notificação enviada com sucesso via API HTTP v1."
+            if [ "$CURRENT_ID" != "$LAST_ID" ]; then
+              echo "Novo sismo detectado! Título: $CURRENT_TITLE"
+              
+              # ** CORREÇÃO: CORPO JSON COM CAMPO 'data' E AUTORIZAÇÃO BEARER **
+              JSON_BODY=$(jq -n \
+                          --arg to "/topics/ALERTAS_SISMOS_FORTES" \
+                          --arg title "Significant Earthquake: $CURRENT_TITLE" \
+                          --arg body "A significant earthquake has been detected. Tap to open StreamNew Monitor for details." \
+                          --arg sound "default" \
+                          --arg sismo_id "$CURRENT_ID" \
+                          --arg sismo_magnitude "$(echo "$QUAKE" | jq -r '.properties.mag')" \
+                          --arg sismo_place "$(echo "$QUAKE" | jq -r '.properties.place')" \
+                          --arg sismo_time "$(echo "$QUAKE" | jq -r '.properties.time')" \
+                          '{
+                            "message": {
+                                "topic": $to,
+                                "notification": {
+                                    "title": $title,
+                                    "body": $body
+                                },
+                                "data": {
+                                    "id": $sismo_id,
+                                    "magnitude": $sismo_magnitude,
+                                    "place": $sismo_place,
+                                    "time": $sismo_time
+                                }
+                            }
+                          }')
+
+              curl -X POST -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+                   -d "$JSON_BODY" https://fcm.googleapis.com/v1/projects/streamnewapp/messages:send
+
+            else
+              echo "Nenhum sismo novo detectado."
+              break
+            fi
+          done
+
+          if [ -n "$FIRST_QUAKE_ID" ]; then
+             echo "$FIRST_QUAKE_ID" > "$LAST_ID_FILE"
+             git config --global user.name 'GitHub Actions'
+             git config --global user.email 'actions@github.com'
+             git add $LAST_ID_FILE
+             git commit -m "Atualiza o ID do último sismo processado"
+             git push
+          fi
