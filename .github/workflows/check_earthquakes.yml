@@ -13,45 +13,62 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Instalar JQ
-        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Instalar dependências
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl python3 python3-pip
+          pip3 install google-auth
+
+      - name: Gerar token OAuth 2.0 com chave JSON
+        id: auth
+        run: |
+          echo "${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}" > service-account.json
+
+          ACCESS_TOKEN=$(python3 - <<EOF
+          import json
+          import google.auth
+          from google.auth.transport.requests import Request
+          from google.oauth2 import service_account
+
+          creds = service_account.Credentials.from_service_account_file(
+              'service-account.json',
+              scopes=['https://www.googleapis.com/auth/firebase.messaging']
+          )
+          creds.refresh(Request())
+          print(creds.token)
+          EOF
+          )
+
+          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
 
       - name: Verificar API e Enviar Notificação de Teste
         run: |
-          # --- Informações de TESTE ---
-          # Esta API busca o sismo mais recente de qualquer magnitude
           API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=1.0&limit=1&orderby=time"
-          FCM_KEY="${{ secrets.FCM_SERVER_KEY }}"
 
-          # Baixa o JSON da API
           FEED_CONTENT=$(curl -s "$API_URL")
-
-          # Extrai o título e a magnitude do sismo mais recente de forma segura
           CURRENT_TITLE=$(echo "$FEED_CONTENT" | jq -r '.features[0].properties.title')
           CURRENT_MAGNITUDE=$(echo "$FEED_CONTENT" | jq -r '.features[0].properties.mag')
 
           echo "Sismo de teste encontrado: $CURRENT_TITLE (M$CURRENT_MAGNITUDE)"
 
-          # Monta o corpo da notificação de TESTE
           JSON_BODY=$(jq -n \
-            --arg to "/topics/ALERTAS_SISMOS_FORTES" \
             --arg title "TESTE: Sismo de Magnitude $CURRENT_MAGNITUDE" \
             --arg body "O sismo mais recente detectado foi: $CURRENT_TITLE" \
-            --arg sound "default" \
             '{
-              "to": $to,
-              "notification": {
-                "title": $title,
-                "body": $body,
-                "sound": $sound
+              "message": {
+                "topic": "ALERTAS_SISMOS_FORTES",
+                "notification": {
+                  "title": $title,
+                  "body": $body
+                }
               }
-            }' \
+            }'
           )
 
-          # Envia a notificação para o Firebase
-          curl -X POST -H "Authorization: key=$FCM_KEY" -H "Content-Type: application/json" \
-            -d "$JSON_BODY" https://fcm.googleapis.com/fcm/send
+          curl -X POST \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_BODY" \
+            https://fcm.googleapis.com/v1/projects/streamnewapp/messages:send
 
-          echo "Notificação de teste enviada para o Firebase."
-
-          # Este script de teste não salva IDs, então não é necessário o git push
+          echo "Notificação enviada com sucesso via API HTTP v1."
