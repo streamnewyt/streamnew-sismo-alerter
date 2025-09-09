@@ -1,9 +1,6 @@
 name: Verificador de Sismos Fortes
 
 on:
-  schedule:
-    # Roda a cada 1 minuto para testes
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -19,65 +16,42 @@ jobs:
       - name: Instalar JQ
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Verificar API e Enviar Notificação
+      - name: Verificar API e Enviar Notificação de Teste
         run: |
-          # Configurações de TESTE: busca sismos de M2.5 nas últimas 2 horas
-          # Isso garante que ele sempre encontrará um sismo na primeira execução.
-          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=2.5&starttime=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
+          # --- Informações de TESTE ---
+          # Esta API busca o sismo mais recente de qualquer magnitude
+          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=1.0&limit=1&orderby=time"
           FCM_KEY="${{ secrets.FCM_SERVER_KEY }}"
-          
-          LAST_ID_FILE="last_quake_id.txt"
-          if [ -f "$LAST_ID_FILE" ]; then
-            LAST_ID=$(cat "$LAST_ID_FILE")
-          else
-            LAST_ID="initial"
-          fi
 
+          # Baixa o JSON da API
           FEED_CONTENT=$(curl -s "$API_URL")
 
-          # Verifica se o JSON tem a chave 'features' antes de tentar iterar
-          if [ "$(echo "$FEED_CONTENT" | jq -e '.features | length')" -eq 0 ]; then
-              echo "A API não retornou sismos para o período. Nenhum sismo novo detectado."
-              exit 0
-          fi
-          
-          # Extrai todos os sismos em um array JSON
-          QUAKES=$(echo "$FEED_CONTENT" | jq -c '.features[]')
-          
-          # Extrai o ID do sismo mais recente para atualizar o arquivo de controle
-          FIRST_QUAKE_ID=$(echo "$QUAKES" | head -n 1 | jq -r '.id')
+          # Extrai o título e a magnitude do sismo mais recente de forma segura
+          CURRENT_TITLE=$(echo "$FEED_CONTENT" | jq -r '.features[0].properties.title')
+          CURRENT_MAGNITUDE=$(echo "$FEED_CONTENT" | jq -r '.features[0].properties.mag')
 
-          # Itera sobre cada sismo do feed
-          echo "$QUAKES" | while read -r QUAKE; do
-            CURRENT_ID=$(echo "$QUAKE" | jq -r '.id')
-            CURRENT_TITLE=$(echo "$QUAKE" | jq -r '.properties.title')
+          echo "Sismo de teste encontrado: $CURRENT_TITLE (M$CURRENT_MAGNITUDE)"
 
-            echo "Último ID processado: $LAST_ID"
-            echo "ID do sismo atual: $CURRENT_ID"
+          # Monta o corpo da notificação de TESTE
+          JSON_BODY=$(jq -n \
+            --arg to "/topics/ALERTAS_SISMOS_FORTES" \
+            --arg title "TESTE: Sismo de Magnitude $CURRENT_MAGNITUDE" \
+            --arg body "O sismo mais recente detectado foi: $CURRENT_TITLE" \
+            --arg sound "default" \
+            '{
+              "to": $to,
+              "notification": {
+                "title": $title,
+                "body": $body,
+                "sound": $sound
+              }
+            }' \
+          )
 
-            if [ "$CURRENT_ID" != "$LAST_ID" ]; then
-              echo "Novo sismo detectado! Título: $CURRENT_TITLE"
-              
-              JSON_BODY=$(jq -n \
-                          --arg id "$CURRENT_ID" \
-                          --arg title "$CURRENT_TITLE" \
-                          --arg to "/topics/ALERTAS_SISMOS_FORTES" \
-                          '{to: $to, notification: {title: "Significant Earthquake: \($title)", body: "A significant earthquake has been detected. Tap to open StreamNew Monitor for details.", sound: "default"}}')
+          # Envia a notificação para o Firebase
+          curl -X POST -H "Authorization: key=$FCM_KEY" -H "Content-Type: application/json" \
+            -d "$JSON_BODY" https://fcm.googleapis.com/fcm/send
 
-              curl -X POST -H "Authorization: key=$FCM_KEY" -H "Content-Type: application/json" \
-                   -d "$JSON_BODY" https://fcm.googleapis.com/fcm/send
+          echo "Notificação de teste enviada para o Firebase."
 
-            else
-              echo "Nenhum sismo novo detectado."
-              break
-            fi
-          done
-
-          if [ -n "$FIRST_QUAKE_ID" ]; then
-             echo "$FIRST_QUAKE_ID" > "$LAST_ID_FILE"
-             git config --global user.name 'GitHub Actions'
-             git config --global user.email 'actions@github.com'
-             git add $LAST_ID_FILE
-             git commit -m "Atualiza o ID do último sismo processado"
-             git push
-          fi
+          # Este script de teste não salva IDs, então não é necessário o git push
