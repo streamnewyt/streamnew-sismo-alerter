@@ -1,7 +1,8 @@
 name: Verificador de Sismos Fortes
 
 on:
-  workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *' # Executa a cada 15 minutos
 
 permissions:
   contents: write
@@ -16,25 +17,19 @@ jobs:
       - name: Instalar Google Cloud CLI e JQ
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq curl
+          sudo apt-get install -y jq curl bc
 
-          # Baixa e instala o Google Cloud SDK
           curl -sS https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-418.0.0-linux-x86_64.tar.gz | tar xz
           ./google-cloud-sdk/install.sh --quiet
-
-          # Adiciona o SDK ao PATH
           source ./google-cloud-sdk/path.bash.inc
 
-          # Salva o JSON da conta de serviço corretamente
           echo '${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}' > service-account.json
-
-          # Autentica com a conta de serviço
           ./google-cloud-sdk/bin/gcloud auth activate-service-account --key-file=service-account.json
           ./google-cloud-sdk/bin/gcloud config set project streamnewapp
 
       - name: Verificar API e Enviar Notificação de Sismo
         run: |
-          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=2.5&starttime=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
+          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=6.0&starttime=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
           ACCESS_TOKEN=$(./google-cloud-sdk/bin/gcloud auth print-access-token)
 
           LAST_ID_FILE="last_quake_id.txt"
@@ -57,44 +52,49 @@ jobs:
           echo "$QUAKES" | while read -r QUAKE; do
             CURRENT_ID=$(echo "$QUAKE" | jq -r '.id')
             CURRENT_TITLE=$(echo "$QUAKE" | jq -r '.properties.title')
+            MAGNITUDE=$(echo "$QUAKE" | jq -r '.properties.mag')
 
             echo "Último ID processado: $LAST_ID"
             echo "ID do sismo atual: $CURRENT_ID"
+            echo "Magnitude: $MAGNITUDE"
 
             if [ "$CURRENT_ID" != "$LAST_ID" ]; then
-              echo "Novo sismo detectado: $CURRENT_TITLE"
+              if (( $(echo "$MAGNITUDE >= 6.0" | bc -l) )); then
+                echo "Sismo forte detectado: $CURRENT_TITLE"
 
-              JSON_BODY=$(jq -n \
-                --arg to "ALERTAS_SISMOS_FORTES" \
-                --arg title "Significant Earthquake: $CURRENT_TITLE" \
-                --arg body "A significant earthquake has been detected. Tap to open StreamNew Monitor for details." \
-                --arg sound "default" \
-                --arg sismo_id "$CURRENT_ID" \
-                --arg sismo_magnitude "$(echo "$QUAKE" | jq -r '.properties.mag')" \
-                --arg sismo_place "$(echo "$QUAKE" | jq -r '.properties.place')" \
-                --arg sismo_time "$(echo "$QUAKE" | jq -r '.properties.time')" \
-                '{
-                  "message": {
-                    "topic": $to,
-                    "notification": {
-                      "title": $title,
-                      "body": $body
-                    },
-                    "data": {
-                      "id": $sismo_id,
-                      "magnitude": $sismo_magnitude,
-                      "place": $sismo_place,
-                      "time": $sismo_time
+                JSON_BODY=$(jq -n \
+                  --arg to "ALERTAS_SISMOS_FORTES" \
+                  --arg title "Significant Earthquake: $CURRENT_TITLE" \
+                  --arg body "A significant earthquake has been detected. Tap to open StreamNew Monitor for details." \
+                  --arg sound "default" \
+                  --arg sismo_id "$CURRENT_ID" \
+                  --arg sismo_magnitude "$MAGNITUDE" \
+                  --arg sismo_place "$(echo "$QUAKE" | jq -r '.properties.place')" \
+                  --arg sismo_time "$(echo "$QUAKE" | jq -r '.properties.time')" \
+                  '{
+                    "message": {
+                      "topic": $to,
+                      "notification": {
+                        "title": $title,
+                        "body": $body
+                      },
+                      "data": {
+                        "id": $sismo_id,
+                        "magnitude": $sismo_magnitude,
+                        "place": $sismo_place,
+                        "time": $sismo_time
+                      }
                     }
-                  }
-                }')
+                  }')
 
-              curl -X POST \
-                -H "Authorization: Bearer $ACCESS_TOKEN" \
-                -H "Content-Type: application/json" \
-                -d "$JSON_BODY" \
-                https://fcm.googleapis.com/v1/projects/streamnewapp/messages:send
-
+                curl -X POST \
+                  -H "Authorization: Bearer $ACCESS_TOKEN" \
+                  -H "Content-Type: application/json" \
+                  -d "$JSON_BODY" \
+                  https://fcm.googleapis.com/v1/projects/streamnewapp/messages:send
+              else
+                echo "Sismo ignorado: magnitude abaixo de 6.0"
+              fi
             else
               echo "Nenhum sismo novo detectado."
               break
