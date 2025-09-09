@@ -3,7 +3,7 @@ name: Verificador de Sismos Fortes
 on:
   schedule:
     # Roda a cada 1 minuto para testes
-    - cron: '*/5 * * * *'  # Executa a cada 5 minutos
+    - cron: '*/1 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -21,12 +21,11 @@ jobs:
 
       - name: Verificar API e Enviar Notificação
         run: |
-          # Define as variáveis importantes para TESTE
-          # Busca sismos a partir de M2.5 com filtro de 1 minuto
-          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=2.5&starttime=$(date -u -d '1 minutes ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
+          # Configurações de TESTE: busca sismos de M2.5 nas últimas 2 horas
+          # Isso garante que ele sempre encontrará um sismo na primeira execução.
+          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=2.5&starttime=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
           FCM_KEY="${{ secrets.FCM_SERVER_KEY }}"
           
-          # Pega o ID do último sismo que notificamos
           LAST_ID_FILE="last_quake_id.txt"
           if [ -f "$LAST_ID_FILE" ]; then
             LAST_ID=$(cat "$LAST_ID_FILE")
@@ -35,6 +34,14 @@ jobs:
           fi
 
           FEED_CONTENT=$(curl -s "$API_URL")
+
+          # Verifica se o JSON tem a chave 'features' antes de tentar iterar
+          if [ "$(echo "$FEED_CONTENT" | jq -e '.features | length')" -eq 0 ]; then
+              echo "A API não retornou sismos para o período. Nenhum sismo novo detectado."
+              exit 0
+          fi
+          
+          # Extrai todos os sismos em um array JSON
           QUAKES=$(echo "$FEED_CONTENT" | jq -c '.features[]')
           
           # Extrai o ID do sismo mais recente para atualizar o arquivo de controle
@@ -66,7 +73,6 @@ jobs:
             fi
           done
 
-          # Adiciona uma nova lógica para salvar o ID do sismo mais recente de forma segura
           if [ -n "$FIRST_QUAKE_ID" ]; then
              echo "$FIRST_QUAKE_ID" > "$LAST_ID_FILE"
              git config --global user.name 'GitHub Actions'
