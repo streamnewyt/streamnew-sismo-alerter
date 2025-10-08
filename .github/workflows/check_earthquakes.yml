@@ -65,9 +65,8 @@ jobs:
 
                 JSON_BODY=$(jq -n \
                   --arg to "ALERTAS_SISMOS_FORTES" \
-                  --arg title "Significant Earthquake: $CURRENT_TITLE" \
-                  --arg body "A significant earthquake has been detected. Tap to open StreamNew Monitor for details." \
-                  --arg sound "default" \
+                  --arg title "Sismo Significativo: $CURRENT_TITLE" \
+                  --arg body "Um sismo significativo foi detectado. Toque para mais detalhes." \
                   --arg sismo_id "$CURRENT_ID" \
                   --arg sismo_magnitude "$MAGNITUDE" \
                   --arg sismo_place "$(echo "$QUAKE" | jq -r '.properties.place')" \
@@ -75,11 +74,13 @@ jobs:
                   '{
                     "message": {
                       "topic": $to,
-                      "notification": {
-                        "title": $title,
-                        "body": $body
-                      },
+                      # O bloco "notification" foi REMOVIDO daqui.
                       "data": {
+                        # O título e o corpo foram MOVIDOS para cá:
+                        "title": $title,
+                        "body": $body,
+                        
+                        # Os outros dados continuam aqui:
                         "id": $sismo_id,
                         "magnitude": $sismo_magnitude,
                         "place": $sismo_place,
