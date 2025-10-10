@@ -1,9 +1,10 @@
+yml
 name: Verificador de Sismos Fortes
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *' # Executa a cada 15 minutos
+    - cron: '*/15 * * * *'
 
 permissions:
   contents: write
@@ -19,100 +20,72 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y jq curl bc
-
           curl -sS https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-418.0.0-linux-x86_64.tar.gz | tar xz
           ./google-cloud-sdk/install.sh --quiet
           source ./google-cloud-sdk/path.bash.inc
-
           echo '${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}' > service-account.json
           ./google-cloud-sdk/bin/gcloud auth activate-service-account --key-file=service-account.json
           ./google-cloud-sdk/bin/gcloud config set project streamnewapp
 
       - name: Verificar API e Enviar Notificação de Sismo
         run: |
-          # A URL da API continua com minmagnitude=5.0 para seus testes
           API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=5.0&starttime=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
           ACCESS_TOKEN=$(./google-cloud-sdk/bin/gcloud auth print-access-token)
-
           LAST_ID_FILE="last_quake_id.txt"
-          # Forma mais segura de ler o arquivo de ID, evitando erros se o arquivo não existir na primeira execução
-          LAST_ID=$(cat "$LAST_ID_FILE" 2>/dev/null || echo "initial")
-
+          if [ -f "$LAST_ID_FILE" ]; then
+            LAST_ID=$(cat "$LAST_ID_FILE")
+          else
+            LAST_ID="initial"
+          fi
           FEED_CONTENT=$(curl -s "$API_URL")
-
-          # Verifica de forma segura se a lista de 'features' está vazia
-          if [ -z "$(echo "$FEED_CONTENT" | jq '.features[]')" ]; then
+          if [ "$(echo "$FEED_CONTENT" | jq -e '.features | length')" -eq 0 ]; then
               echo "Nenhum sismo detectado no período."
               exit 0
           fi
-
           QUAKES=$(echo "$FEED_CONTENT" | jq -c '.features[]')
           FIRST_QUAKE_ID=$(echo "$QUAKES" | head -n 1 | jq -r '.id')
-          PROCESSED_A_QUAKE_IN_THIS_RUN=false
-
-          echo "Iniciando verificação de sismos novos. Último ID conhecido: $LAST_ID"
           echo "$QUAKES" | while read -r QUAKE; do
             CURRENT_ID=$(echo "$QUAKE" | jq -r '.id')
-
-            # --- LÓGICA CORRIGIDA E ESSENCIAL ---
-            # Se o ID atual for o mesmo que o último que já processamos, significa que já vimos todos os novos. Paramos o loop.
+            
+            # Sua lógica original e confiável que não envia spam
             if [ "$CURRENT_ID" == "$LAST_ID" ]; then
-              echo "Encontrado o último sismo já processado ($LAST_ID). Finalizando a busca."
+              echo "Nenhum sismo novo detectado. Parando."
               break
             fi
-            
-            # Se chegamos aqui, este é um sismo novo. Vamos analisá-lo.
             MAGNITUDE=$(echo "$QUAKE" | jq -r '.properties.mag')
-            echo "Processando sismo NOVO: ID $CURRENT_ID, Magnitude: $MAGNITUDE"
-
-            # A sua regra de negócio continua a mesma: notificar se for >= 5.0
             if (( $(echo "$MAGNITUDE >= 5.0" | bc -l) )); then
               CURRENT_TITLE=$(echo "$QUAKE" | jq -r '.properties.title')
-              echo ">>> Sismo forte detectado: $CURRENT_TITLE <<<"
+              echo "Sismo forte detectado: $CURRENT_TITLE"
 
+              # ▼▼▼ JSON_BODY SIMPLES ENVIANDO TEXTO FIXO EM PORTUGUÊS ▼▼▼
               JSON_BODY=$(jq -n \
                 --arg to "ALERTAS_SISMOS_FORTES" \
                 --arg title "Sismo Significativo: $CURRENT_TITLE" \
                 --arg body "Um sismo significativo foi detectado. Toque para mais detalhes." \
-                --arg sismo_id "$CURRENT_ID" \
-                --arg sismo_magnitude "$MAGNITUDE" \
-                --arg sismo_place "$(echo "$QUAKE" | jq -r '.properties.place')" \
-                --arg sismo_time "$(echo "$QUAKE" | jq -r '.properties.time')" \
                 '{
                   "message": {
                     "topic": $to,
                     "data": {
                       "title": $title,
-                      "body": $body,
-                      "id": $sismo_id,
-                      "magnitude": $sismo_magnitude,
-                      "place": $sismo_place,
-                      "time": $sismo_time
+                      "body": $body
                     }
                   }
                 }')
 
-              curl -X POST \
-                -H "Authorization: Bearer $ACCESS_TOKEN" \
-                -H "Content-Type: application/json" \
-                -d "$JSON_BODY" \
-                https://fcm.googleapis.com/v1/projects/streamnewapp/messages:send
+              curl -X POST -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY" https://fcm.googleapis.com/v1/projects/streamnewapp/messages:send
+              
+              echo "Notificação enviada. Finalizando ciclo."
+              break 
+            else
+              echo "Sismo novo ignorado (Mag: $MAGNITUDE), continuando a busca..."
             fi
-            # Marca que processamos pelo menos um item novo nesta execução
-            PROCESSED_A_QUAKE_IN_THIS_RUN=true
           done
 
-          # --- LÓGICA DE ATUALIZAÇÃO DO ARQUIVO CORRIGIDA ---
-          # Atualiza o arquivo de ID apenas se tivermos processado sismos novos e o mais recente for diferente do antigo
-          if [ "$PROCESSED_A_QUAKE_IN_THIS_RUN" = true ] && [ "$FIRST_QUAKE_ID" != "$LAST_ID" ]; then
-            echo "Atualizando ID do último sismo para: $FIRST_QUAKE_ID"
+          if [ -n "$FIRST_QUAKE_ID" ] && [ "$FIRST_QUAKE_ID" != "$LAST_ID" ]; then
             echo "$FIRST_QUAKE_ID" > "$LAST_ID_FILE"
             git config --global user.name 'GitHub Actions'
             git config --global user.email 'actions@github.com'
             git add $LAST_ID_FILE
-            # Mensagem de commit mais descritiva
-            git commit -m "Atualiza o ID do último sismo processado para ${FIRST_QUAKE_ID}"
+            git commit -m "Atualiza o ID do último sismo para ${FIRST_QUAKE_ID}"
             git push
-          else
-            echo "Nenhum sismo novo para atualizar o ID ou o ID mais recente já é o conhecido. Nada a comitar."
           fi
