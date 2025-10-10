@@ -28,7 +28,7 @@ jobs:
 
       - name: Verificar API e Enviar Notificação de Sismo
         run: |
-          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=5.0&starttime=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
+          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=6.0&starttime=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
           ACCESS_TOKEN=$(./google-cloud-sdk/bin/gcloud auth print-access-token)
           LAST_ID_FILE="last_quake_id.txt"
           if [ -f "$LAST_ID_FILE" ]; then
@@ -52,7 +52,7 @@ jobs:
               break
             fi
             MAGNITUDE=$(echo "$QUAKE" | jq -r '.properties.mag')
-            if (( $(echo "$MAGNITUDE >= 5.0" | bc -l) )); then
+            if (( $(echo "$MAGNITUDE >= 6.0" | bc -l) )); then
               CURRENT_TITLE=$(echo "$QUAKE" | jq -r '.properties.title')
               echo "Sismo forte detectado: $CURRENT_TITLE"
 
