@@ -56,25 +56,35 @@ jobs:
               CURRENT_TITLE=$(echo "$QUAKE" | jq -r '.properties.title')
               echo "Sismo forte detectado: $CURRENT_TITLE"
 
-              # ▼▼▼ JSON_BODY SIMPLES ENVIANDO TEXTO FIXO EM PORTUGUÊS ▼▼▼
+              # Extrai dados para o payload
+              SISMO_ID=$(echo "$QUAKE" | jq -r '.id')
+              MAG=$(echo "$MAGNITUDE" | awk '{printf "%.1f", $1}')
+              PLACE=$(echo "$QUAKE" | jq -r '.properties.place // "Unknown location"')
+
+              # ▼▼▼ PAYLOAD COM SISMO_ID (para abrir o modal correto) e LOCALIZAÇÃO ▼▼▼
+              # O campo 'data' chega ao MyFirebaseMessagingService.kt.
+              # O app usa strings.xml para exibir o texto no idioma do celular.
               JSON_BODY=$(jq -n \
-                --arg to "ALERTAS_SISMOS_FORTES" \
-                --arg title "Sismo Significativo: $CURRENT_TITLE" \
-                --arg body "Um sismo significativo foi detectado. Toque para mais detalhes." \
+                --arg topic "ALERTAS_SISMOS_FORTES" \
+                --arg sismo_id "$SISMO_ID" \
+                --arg mag "$MAG" \
+                --arg place "$PLACE" \
                 '{
                   "message": {
-                    "topic": $to,
+                    "topic": $topic,
                     "data": {
-                      "title": $title,
-                      "body": $body
+                      "sismo_id": $sismo_id,
+                      "magnitude": $mag,
+                      "place": $place
                     }
                   }
                 }')
 
               curl -X POST -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY" https://fcm.googleapis.com/v1/projects/streamnewapp/messages:send
-              
-              echo "Notificação enviada. Finalizando ciclo."
-              break 
+
+              echo "Notificação enviada (ID: $SISMO_ID | Mag: $MAG). Finalizando ciclo."
+              break
+
             else
               echo "Sismo novo ignorado (Mag: $MAGNITUDE), continuando a busca..."
             fi
