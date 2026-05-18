@@ -28,7 +28,7 @@ jobs:
 
       - name: Verificar API e Enviar Notificação de Sismo
         run: |
-          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=6.0&starttime=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
+          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=3.0&starttime=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
           ACCESS_TOKEN=$(./google-cloud-sdk/bin/gcloud auth print-access-token)
           LAST_ID_FILE="last_quake_id.txt"
           if [ -f "$LAST_ID_FILE" ]; then
@@ -52,39 +52,53 @@ jobs:
               break
             fi
             MAGNITUDE=$(echo "$QUAKE" | jq -r '.properties.mag')
-            if (( $(echo "$MAGNITUDE >= 6.0" | bc -l) )); then
+            if (( $(echo "$MAGNITUDE >= 3.0" | bc -l) )); then
               CURRENT_TITLE=$(echo "$QUAKE" | jq -r '.properties.title')
               echo "Sismo forte detectado: $CURRENT_TITLE"
 
-              # Extrai dados para o payload
+              # Extrai os dados do sismo para o payload
               SISMO_ID=$(echo "$QUAKE" | jq -r '.id')
               MAG=$(echo "$MAGNITUDE" | awk '{printf "%.1f", $1}')
               PLACE=$(echo "$QUAKE" | jq -r '.properties.place // "Unknown location"')
+              
+              # Extrai coordenadas para gerar o mapa de satélite estático
+              LATITUDE=$(echo "$QUAKE" | jq -r '.geometry.coordinates[1]')
+              LONGITUDE=$(echo "$QUAKE" | jq -r '.geometry.coordinates[0]')
+              MAP_IMAGE_URL="https://static-maps.yandex.ru/1.x/?ll=${LONGITUDE},${LATITUDE}&z=4&l=sat&size=600,300&pt=${LONGITUDE},${LATITUDE},pm2rdl"
 
-              # ▼▼▼ PAYLOAD COM SISMO_ID (para abrir o modal correto) e LOCALIZAÇÃO ▼▼▼
-              # O campo 'data' chega ao MyFirebaseMessagingService.kt.
-              # O app usa strings.xml para exibir o texto no idioma do celular.
+              # ▼▼▼ JSON_BODY COM LOCALIZAÇÃO AUTOMÁTICA E IMAGEM SATÉLITE ▼▼▼
               JSON_BODY=$(jq -n \
                 --arg topic "ALERTAS_SISMOS_FORTES" \
                 --arg sismo_id "$SISMO_ID" \
                 --arg mag "$MAG" \
                 --arg place "$PLACE" \
+                --arg image_url "$MAP_IMAGE_URL" \
                 '{
                   "message": {
                     "topic": $topic,
+                    "android": {
+                      "notification": {
+                        "title_loc_key": "notif_quake_title",
+                        "body_loc_key":  "notif_quake_body",
+                        "body_loc_args": [$mag, $place],
+                        "click_action": "OPEN_SISMO_DETAIL",
+                        "channel_id": "sismo_alerts",
+                        "image": $image_url
+                      }
+                    },
                     "data": {
                       "sismo_id": $sismo_id,
                       "magnitude": $mag,
-                      "place": $place
+                      "place": $place,
+                      "image_url": $image_url
                     }
                   }
                 }')
 
               curl -X POST -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY" https://fcm.googleapis.com/v1/projects/streamnewapp/messages:send
-
-              echo "Notificação enviada (ID: $SISMO_ID | Mag: $MAG). Finalizando ciclo."
-              break
-
+              
+              echo "Notificação enviada (ID: $SISMO_ID). Finalizando ciclo."
+              break 
             else
               echo "Sismo novo ignorado (Mag: $MAGNITUDE), continuando a busca..."
             fi
