@@ -28,7 +28,7 @@ jobs:
 
       - name: Verificar API e Enviar Notificação de Sismo
         run: |
-          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=2.0&starttime=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
+          API_URL="https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=6.0&starttime=$(date -u -d '2 hours ago' +'%Y-%m-%dT%H:%M:%S')&orderby=time"
           ACCESS_TOKEN=$(./google-cloud-sdk/bin/gcloud auth print-access-token)
           LAST_ID_FILE="last_quake_id.txt"
           if [ -f "$LAST_ID_FILE" ]; then
@@ -52,7 +52,7 @@ jobs:
               break
             fi
             MAGNITUDE=$(echo "$QUAKE" | jq -r '.properties.mag')
-            if (( $(echo "$MAGNITUDE >= 2.0" | bc -l) )); then
+            if (( $(echo "$MAGNITUDE >= 6.0" | bc -l) )); then
               CURRENT_TITLE=$(echo "$QUAKE" | jq -r '.properties.title')
               echo "Sismo forte detectado: $CURRENT_TITLE"
 
@@ -64,8 +64,9 @@ jobs:
               # Extrai coordenadas para gerar o mapa de satélite estático
               LATITUDE=$(echo "$QUAKE" | jq -r '.geometry.coordinates[1]')
               LONGITUDE=$(echo "$QUAKE" | jq -r '.geometry.coordinates[0]')
-              MAP_IMAGE_URL="https://static-maps.yandex.ru/1.x/?ll=${LONGITUDE},${LATITUDE}&z=4&l=sat&size=600,300&pt=${LONGITUDE},${LATITUDE},pm2rdl"
+              MAP_IMAGE_URL="https://static-maps.yandex.com/1.x/?ll=${LONGITUDE},${LATITUDE}&z=4&l=sat&size=600,300&pt=${LONGITUDE},${LATITUDE},pm2rdl"
 
+              # ▼▼▼ JSON_BODY COM LOCALIZAÇÃO AUTOMÁTICA E IMAGEM SATÉLITE ▼▼▼
               # ▼▼▼ JSON_BODY COMO DATA-MESSAGE PURA (GARANTE IMAGEM EM BACKGROUND) ▼▼▼
               JSON_BODY=$(jq -n \
                 --arg topic "ALERTAS_SISMOS_FORTES" \
