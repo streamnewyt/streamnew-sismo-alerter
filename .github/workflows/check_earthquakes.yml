@@ -67,6 +67,7 @@ jobs:
               MAP_IMAGE_URL="https://static-maps.yandex.ru/1.x/?ll=${LONGITUDE},${LATITUDE}&z=4&l=sat&size=600,300&pt=${LONGITUDE},${LATITUDE},pm2rdl"
 
               # ▼▼▼ JSON_BODY COM LOCALIZAÇÃO AUTOMÁTICA E IMAGEM SATÉLITE ▼▼▼
+              # ▼▼▼ JSON_BODY COMO DATA-MESSAGE PURA (GARANTE IMAGEM EM BACKGROUND) ▼▼▼
               JSON_BODY=$(jq -n \
                 --arg topic "ALERTAS_SISMOS_FORTES" \
                 --arg sismo_id "$SISMO_ID" \
@@ -76,16 +77,6 @@ jobs:
                 '{
                   "message": {
                     "topic": $topic,
-                    "android": {
-                      "notification": {
-                        "title_loc_key": "notif_quake_title",
-                        "body_loc_key":  "notif_quake_body",
-                        "body_loc_args": [$mag, $place],
-                        "click_action": "OPEN_SISMO_DETAIL",
-                        "channel_id": "sismo_alerts",
-                        "image": $image_url
-                      }
-                    },
                     "data": {
                       "sismo_id": $sismo_id,
                       "magnitude": $mag,
