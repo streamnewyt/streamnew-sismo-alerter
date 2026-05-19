@@ -64,7 +64,7 @@ jobs:
               # Extrai coordenadas para gerar o mapa de satélite estático
               LATITUDE=$(echo "$QUAKE" | jq -r '.geometry.coordinates[1]')
               LONGITUDE=$(echo "$QUAKE" | jq -r '.geometry.coordinates[0]')
-              MAP_IMAGE_URL="https://static-maps.yandex.com/1.x/?ll=${LONGITUDE},${LATITUDE}&z=4&l=sat&size=600,300&pt=${LONGITUDE},${LATITUDE},pm2rdl"
+              MAP_IMAGE_URL="https://static-maps.yandex.ru/1.x/?ll=${LONGITUDE},${LATITUDE}&z=4&l=sat&size=600,300&pt=${LONGITUDE},${LATITUDE},pm2rdl"
 
               # ▼▼▼ JSON_BODY COM LOCALIZAÇÃO AUTOMÁTICA E IMAGEM SATÉLITE ▼▼▼
               # ▼▼▼ JSON_BODY COMO DATA-MESSAGE PURA (GARANTE IMAGEM EM BACKGROUND) ▼▼▼
